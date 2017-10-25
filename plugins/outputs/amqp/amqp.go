@@ -183,8 +183,8 @@ func (q *AMQP) Connect() error {
 
 		q.setClient(nil)
 
-		//log.Printf("I! Closing: %s", err)
-		//log.Printf("I! Trying to reconnect")
+		log.Printf("I! Closing: %s", err)
+		log.Printf("I! Trying to reconnect")
 		for err := q.Connect(); err != nil; err = q.Connect() {
 			log.Println("E! ", err.Error())
 			time.Sleep(10 * time.Second)
@@ -268,7 +268,7 @@ func (q *AMQP) Write(metrics []telegraf.Metric) error {
 	for key, buf := range outbuf {
 		// Note that since the channel is not in confirm mode, the absence of
 		// an error does not indicate successful delivery.
-		log.Println("Routing Key:",  key, "exchange:", q.Exchange)
+		//log.Println("Routing Key:",  key, "exchange:", q.Exchange)
 		err := c.channel.Publish(
 			q.Exchange, // exchange
 			key,        // routing key
