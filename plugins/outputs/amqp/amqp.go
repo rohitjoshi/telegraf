@@ -27,6 +27,10 @@ type AMQP struct {
 	URL string
 	// AMQP exchange
 	Exchange string
+	/// Declare Exchange
+	ExchangeDeclare bool
+	/// filter value
+	FilterValue bool
 	// AMQP Auth method
 	AuthMethod string
 	// Routing Key Tag
@@ -75,6 +79,7 @@ var sampleConfig = `
   url = "amqp://localhost:5672/influxdb"
   ## AMQP exchange
   exchange = "telegraf"
+  exchange_declare = false
   ## Auth method. PLAIN and EXTERNAL are supported
   ## Using EXTERNAL requires enabling the rabbitmq_auth_mechanism_ssl plugin as
   ## described here: https://www.rabbitmq.com/plugins.html
@@ -148,19 +153,21 @@ func (q *AMQP) Connect() error {
 	if err != nil {
 		return fmt.Errorf("Failed to open a channel: %s", err)
 	}
-
-	err = channel.ExchangeDeclare(
-		q.Exchange, // name
-		"topic",    // type
-		true,       // durable
-		false,      // delete when unused
-		false,      // internal
-		false,      // no-wait
-		nil,        // arguments
-	)
-	if err != nil {
-		return fmt.Errorf("Failed to declare an exchange: %s", err)
+	if q.ExchangeDeclare {
+		err = channel.ExchangeDeclare(
+			q.Exchange, // name
+			"topic",    // type
+			true,       // durable
+			false,      // delete when unused
+			false,      // internal
+			false,      // no-wait
+			nil,        // arguments
+		)
+		if err != nil {
+			return fmt.Errorf("Failed to declare an exchange: %s", err)
+		}
 	}
+
 
 	q.setClient(&client{
 		conn:    connection,
@@ -176,8 +183,8 @@ func (q *AMQP) Connect() error {
 
 		q.setClient(nil)
 
-		log.Printf("I! Closing: %s", err)
-		log.Printf("I! Trying to reconnect")
+		//log.Printf("I! Closing: %s", err)
+		//log.Printf("I! Trying to reconnect")
 		for err := q.Connect(); err != nil; err = q.Connect() {
 			log.Println("E! ", err.Error())
 			time.Sleep(10 * time.Second)
@@ -225,20 +232,43 @@ func (q *AMQP) Write(metrics []telegraf.Metric) error {
 		if q.RoutingTag != "" {
 			if h, ok := metric.Tags()[q.RoutingTag]; ok {
 				key = h
+			}else {
+				key = q.RoutingTag 
 			}
 		}
-
-		buf, err := q.serializer.Serialize(metric)
-		if err != nil {
-			return err
+		var buf []byte
+		//&& metric.HasField("value")
+		if q.FilterValue  { 
+			
+			a := metric.Fields()["value"]
+			if  str, ok := a.(string); ok {
+				buf = []byte(str + "\n")
+			}else {
+				m, err := q.serializer.Serialize(metric)
+				if err != nil {
+					return err
+				}else {
+					buf = m
+				}
+			}
+		}else {
+			m, err := q.serializer.Serialize(metric)
+			if err != nil {
+				return err
+			}else {
+				buf = m
+			}
 		}
-
+		
+		
 		outbuf[key] = append(outbuf[key], buf...)
-	}
 
+	}
+	
 	for key, buf := range outbuf {
 		// Note that since the channel is not in confirm mode, the absence of
 		// an error does not indicate successful delivery.
+		log.Println("Routing Key:",  key, "exchange:", q.Exchange)
 		err := c.channel.Publish(
 			q.Exchange, // exchange
 			key,        // routing key
@@ -252,7 +282,9 @@ func (q *AMQP) Write(metrics []telegraf.Metric) error {
 		if err != nil {
 			return fmt.Errorf("Failed to send AMQP message: %s", err)
 		}
+		
 	}
+	
 	return nil
 }
 
